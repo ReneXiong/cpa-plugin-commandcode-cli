@@ -80,13 +80,12 @@ func cliAssistantMessage(msg map[string]any, callNames map[string]string) map[st
 }
 
 // assistantReasoning folds the OpenAI reasoning fields of an assistant turn
-// into replay text: reasoning_content (string), reasoning (string), then
-// reasoning_details[].text.
+// into replay text: reasoning_content (string), then reasoning_details[].text,
+// then reasoning (string). The details win over the plain string for the same
+// reason as in reasoningText: they are the authoritative per-token text.
 func assistantReasoning(msg map[string]any) string {
-	for _, key := range []string{"reasoning_content", "reasoning"} {
-		if s, ok := msg[key].(string); ok && strings.TrimSpace(s) != "" {
-			return s
-		}
+	if s, ok := msg["reasoning_content"].(string); ok && strings.TrimSpace(s) != "" {
+		return s
 	}
 	if list, ok := msg["reasoning_details"].([]any); ok {
 		var b strings.Builder
@@ -97,7 +96,12 @@ func assistantReasoning(msg map[string]any) string {
 				}
 			}
 		}
-		return b.String()
+		if strings.TrimSpace(b.String()) != "" {
+			return b.String()
+		}
+	}
+	if s, ok := msg["reasoning"].(string); ok && strings.TrimSpace(s) != "" {
+		return s
 	}
 	return ""
 }

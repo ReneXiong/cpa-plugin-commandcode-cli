@@ -259,3 +259,35 @@ func TestUsageCarriesCacheWriteTokens(t *testing.T) {
 		t.Fatalf("usage JSON = %s", raw)
 	}
 }
+
+func TestUsageReadsTopLevelCacheBucketsWithoutDetails(t *testing.T) {
+	usage := convertCLIUsage(map[string]any{
+		"inputTokens": float64(1000), "outputTokens": float64(5),
+		"cacheReadTokens": float64(400), "cacheWriteTokens": float64(250),
+	})
+	if usage == nil || usage.PromptDetails == nil {
+		t.Fatal("prompt details missing without inputTokenDetails")
+	}
+	if usage.PromptDetails.CacheWriteTokens != 250 || usage.PromptDetails.CachedTokens != 400 {
+		t.Fatalf("details = %#v", usage.PromptDetails)
+	}
+}
+
+func TestAssistantReasoningPrefersDetailsOverPlainString(t *testing.T) {
+	msg := map[string]any{
+		"reasoning":         "stale",
+		"reasoning_details": []any{map[string]any{"text": "author"}, map[string]any{"text": "itative"}},
+	}
+	if got := assistantReasoning(msg); got != "authoritative" {
+		t.Fatalf("assistantReasoning = %q, want details text", got)
+	}
+	msg["reasoning_content"] = "canonical"
+	if got := assistantReasoning(msg); got != "canonical" {
+		t.Fatalf("assistantReasoning = %q, want reasoning_content first", got)
+	}
+	delete(msg, "reasoning_content")
+	msg["reasoning_details"] = []any{}
+	if got := assistantReasoning(msg); got != "stale" {
+		t.Fatalf("assistantReasoning = %q, want plain-string fallback", got)
+	}
+}

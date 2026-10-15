@@ -261,7 +261,10 @@ func (e *Executor) buildCLIBody(model string, payload []byte) []byte {
 	}
 	// tool_choice is a validated object on this route: {type:"auto"|"any"|"tool",
 	// name?}. OpenAI "none" has no counterpart (the union rejects "none"), so it
-	// is emulated by sending an empty tools list.
+	// is emulated by sending an empty tools list. Note: live probing shows the
+	// route accepts a forcing choice ("any"/"tool") but does not enforce it (the
+	// official CLI never sends one); it is mapped so the request stays valid and
+	// takes effect if the route starts honoring it. Only "none" is guaranteed.
 	if tc, stripTools := cliToolChoice(src["tool_choice"], src["parallel_tool_calls"]); stripTools {
 		params["tools"] = []any{}
 	} else if tc != nil {
@@ -662,6 +665,9 @@ func cliMediaPart(block map[string]any) map[string]any {
 //
 // parallel_tool_calls:false folds into disable_parallel_tool_use; without a
 // tool_choice it still emits {type:"auto", disable_parallel_tool_use:true}.
+//
+// The route validates but does not currently enforce "any"/"tool"; "none" is
+// the only mapping with a guaranteed effect, because it removes the tools.
 func cliToolChoice(raw, parallelRaw any) (map[string]any, bool) {
 	disableParallel := false
 	if b, ok := parallelRaw.(bool); ok && !b {
@@ -1132,17 +1138,21 @@ func convertCLIUsage(raw map[string]any) *openAIUsage {
 		return nil
 	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	// Hosts map cache_write_tokens to Anthropic's cache_creation_input_tokens.
+	// The nested details are preferred; the top-level names are read on their
+	// own so a report without inputTokenDetails still carries its cache buckets.
+	cached := intField(raw, "cacheReadTokens")
+	write := intField(raw, "cacheWriteTokens")
 	if details, ok := raw["inputTokenDetails"].(map[string]any); ok {
-		cached := intField(details, "cacheReadTokens")
-		// Hosts map cache_write_tokens to Anthropic's cache_creation_input_tokens.
-		// The field is absent on some events; fall back to the top-level name.
-		write := intField(details, "cacheWriteTokens")
-		if write == 0 {
-			write = intField(raw, "cacheWriteTokens")
+		if v := intField(details, "cacheReadTokens"); v > 0 {
+			cached = v
 		}
-		if cached > 0 || write > 0 {
-			usage.PromptDetails = &openAIUsagePromptDetails{CachedTokens: cached, CacheWriteTokens: write}
+		if v := intField(details, "cacheWriteTokens"); v > 0 {
+			write = v
 		}
+	}
+	if cached > 0 || write > 0 {
+		usage.PromptDetails = &openAIUsagePromptDetails{CachedTokens: cached, CacheWriteTokens: write}
 	}
 	if details, ok := raw["outputTokenDetails"].(map[string]any); ok {
 		if reasoning := intField(details, "reasoningTokens"); reasoning > 0 {
